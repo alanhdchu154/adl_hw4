@@ -133,12 +133,19 @@ def train(
     max_steps: int | None = None,
     max_train_samples: int | None = None,
     resume: bool = False,
+    gradient_checkpointing: bool = False,
+    logging_steps: int = 100,
+    save_steps: int | None = None,
+    warmup_ratio: float = 0.03,
+    lr_scheduler_type: str = "cosine",
+    max_grad_norm: float = 1.0,
+    save_total_limit: int = 2,
+    report_to: str = "tensorboard",
 ):
     """
     Fine-tune a VLM model using LoRA.
 
     Args:
-        model_name: Name of the base model to fine-tune
         data_dir: Directory containing the dataset
         output_dir: Directory to save the fine-tuned model
         num_train_epochs: Number of training epochs
@@ -152,6 +159,12 @@ def train(
         max_steps: If set, overrides num_train_epochs (HF Trainer)
         max_train_samples: Cap dataset size for faster runs (None = all)
         resume: If True, resume from the latest checkpoint under output_dir (Colab-friendly).
+        gradient_checkpointing: True saves VRAM, slower per step (default False).
+        logging_steps: Log / TB write interval (larger = slightly faster).
+        save_steps: Checkpoint interval; None = auto from max_steps (~max_steps/3) or 500.
+        warmup_ratio, lr_scheduler_type, max_grad_norm: HF optimizer schedule.
+        save_total_limit: Max checkpoints to keep.
+        report_to: tensorboard or none (none reduces I/O on Colab).
     """
     _cuda_training_speedups()
 
@@ -196,23 +209,23 @@ def train(
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
-    # Configure training arguments
+    # Configure training arguments (tune wall-clock vs quality via CLI / Fire)
     train_kw: dict = dict(
         output_dir=output_dir,
         logging_dir=output_dir,
-        report_to="tensorboard",
+        report_to=report_to,
         num_train_epochs=num_train_epochs,
         per_device_train_batch_size=per_device_train_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
-        max_grad_norm=1.0,
+        lr_scheduler_type=lr_scheduler_type,
+        warmup_ratio=warmup_ratio,
+        max_grad_norm=max_grad_norm,
         bf16=True if DEVICE == "cuda" else False,
-        logging_steps=100,
+        logging_steps=logging_steps,
         save_strategy="steps",
-        save_steps=500,
-        save_total_limit=2,
+        save_total_limit=save_total_limit,
+        gradient_checkpointing=gradient_checkpointing,
         label_names=["labels"],
         dataloader_num_workers=num_workers,
         dataloader_persistent_workers=num_workers > 0,
@@ -224,9 +237,14 @@ def train(
     if num_workers > 0:
         train_kw["dataloader_prefetch_factor"] = 2
     if max_steps is not None:
+        train_kw["max_steps"] = int(max_steps)
+    if save_steps is not None:
+        train_kw["save_steps"] = int(save_steps)
+    elif max_steps is not None:
         ms = int(max_steps)
-        train_kw["max_steps"] = ms
         train_kw["save_steps"] = max(10, min(500, max(ms // 3, 1)))
+    else:
+        train_kw["save_steps"] = 500
     training_args = TrainingArguments(**train_kw)
 
     # Initialize trainer

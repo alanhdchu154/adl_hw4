@@ -276,6 +276,14 @@ def train(
     max_steps: int | None = None,
     max_train_samples: int | None = None,
     resume: bool = False,
+    gradient_checkpointing: bool = True,
+    logging_steps: int = 100,
+    save_steps: int | None = None,
+    warmup_ratio: float = 0.03,
+    lr_scheduler_type: str = "cosine",
+    max_grad_norm: float = 1.0,
+    save_total_limit: int = 2,
+    report_to: str = "tensorboard",
 ):
     _cuda_training_speedups()
 
@@ -310,7 +318,8 @@ def train(
     model.print_trainable_parameters()
     model.to(device)
     model.train()
-    model.gradient_checkpointing_enable()
+    if gradient_checkpointing:
+        model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
     # load dataset
@@ -320,20 +329,19 @@ def train(
     train_kw: dict = dict(
         output_dir=output_dir,
         logging_dir=output_dir,
-        report_to="tensorboard",
+        report_to=report_to,
         num_train_epochs=num_train_epochs,
         per_device_train_batch_size=per_device_train_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
-        gradient_checkpointing=True,
+        gradient_checkpointing=gradient_checkpointing,
         learning_rate=learning_rate,
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.03,
-        max_grad_norm=1.0,
+        lr_scheduler_type=lr_scheduler_type,
+        warmup_ratio=warmup_ratio,
+        max_grad_norm=max_grad_norm,
         bf16=True if device == "cuda" else False,
-        logging_steps=100,
+        logging_steps=logging_steps,
         save_strategy="steps",
-        save_steps=500,
-        save_total_limit=2,
+        save_total_limit=save_total_limit,
         label_names=["labels"],
         dataloader_num_workers=num_workers,
         dataloader_persistent_workers=num_workers > 0,
@@ -345,10 +353,14 @@ def train(
     if num_workers > 0:
         train_kw["dataloader_prefetch_factor"] = 2
     if max_steps is not None:
+        train_kw["max_steps"] = int(max_steps)
+    if save_steps is not None:
+        train_kw["save_steps"] = int(save_steps)
+    elif max_steps is not None:
         ms = int(max_steps)
-        train_kw["max_steps"] = ms
-        # HF only saves when global_step hits save_steps; save_steps > max_steps => no checkpoints.
         train_kw["save_steps"] = max(10, min(500, max(ms // 3, 1)))
+    else:
+        train_kw["save_steps"] = 500
     training_args = TrainingArguments(**train_kw)
 
     trainer = Trainer(
