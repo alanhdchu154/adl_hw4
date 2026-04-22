@@ -1,0 +1,26 @@
+# local env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# huge / regenerable (do not push to GitHub)
+*.zip
+data/train/*.jpg
+data/valid/*.jpg
+data/train/supertux_qa_pairs.json
+data/train/supertux_captions.json
+
+# training outputs (regenerate on Colab; keep zip small for Canvas)
+homework/vlm_model/
+homework/clip_model/
+homework/demo_train/
+homework/demo_clip/
+homework/vlm_sft/
+homework/tensorboard/
+**/tensorboard/
+*.log
+
+# submission zip (build locally when needed)
+*.zip
