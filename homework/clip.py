@@ -132,12 +132,20 @@ class CLIP(nn.Module):
 
         additional_weights_path = Path(load_directory) / "additional_weights.pt"
         if additional_weights_path.exists():
-            additional_state_dict = torch.load(additional_weights_path, map_location="cpu")
+            try:
+                additional_state_dict = torch.load(
+                    additional_weights_path, map_location="cpu", weights_only=True
+                )
+            except TypeError:
+                additional_state_dict = torch.load(additional_weights_path, map_location="cpu")
 
             for name, param in self.named_parameters():
                 if "vision_encoder." in name or "text_encoder." in name:
                     continue
-                param.data = additional_state_dict[name]
+                if name not in additional_state_dict:
+                    continue
+                src = additional_state_dict[name].to(device=param.device, dtype=param.dtype)
+                param.data.copy_(src)
 
     def set_trainable_parameters(self):
         for name, param in self.named_parameters():
@@ -188,7 +196,8 @@ class CLIP(nn.Module):
         """
         dtype = next(self.vision_encoder.parameters()).dtype
         pixel_values = pixel_values.to(device=pixel_values.device, dtype=dtype)
-        v_out = self.vision_encoder(pixel_values=pixel_values, interpolate_pos_encoding=False)
+        # SmolVLM / Idefics3 vision encoder does not accept `interpolate_pos_encoding` (unlike some ViT APIs).
+        v_out = self.vision_encoder(pixel_values=pixel_values)
         v_h = v_out.last_hidden_state
         img_feat = self.image_proj(v_h.mean(dim=1))
 
@@ -370,9 +379,10 @@ def test(ckpt_path: str, val_dataset: str = "valid_grader"):
     correct_count = 0
     total_count = 0
 
+    pv_dtype = next(clip.parameters()).dtype
     for pair in tqdm.tqdm(testset):
         image = Image.open(pair["image_path"]).convert("RGB")
-        pixel_values = image_processor(image).unsqueeze(0).to(device).bfloat16()
+        pixel_values = image_processor(image).unsqueeze(0).to(device=device, dtype=pv_dtype)
         text_inputs = processor(
             text=[s + processor.tokenizer.eos_token for s in pair["candidates"]],
             return_tensors="pt",
@@ -383,7 +393,7 @@ def test(ckpt_path: str, val_dataset: str = "valid_grader"):
         attention_mask = text_inputs["attention_mask"].to(device)
         vision_feature, text_feature, _ = clip(pixel_values, input_ids, attention_mask)
         prediction = torch.matmul(vision_feature, text_feature.T).argmax(dim=-1)
-        if prediction == pair["correct_index"]:
+        if int(prediction.item()) == int(pair["correct_index"]):
             correct_count += 1
         total_count += 1
 

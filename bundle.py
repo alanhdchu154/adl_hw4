@@ -2,8 +2,25 @@ import argparse
 import zipfile
 from pathlib import Path
 
-BLACKLIST = ["__pycache__", ".pyc", ".ipynb"]
-MAXSIZE_MB = 40
+# Substrings: any path containing these is skipped (keeps submission under Canvas ~50MB).
+BLACKLIST = [
+    "__pycache__",
+    ".pyc",
+    ".ipynb",
+    "/tensorboard/",
+    "tensorboard/",
+    "/checkpoint-",
+    "checkpoint-",
+    "/runs/",
+    "events.out.tfevents",
+    "optimizer.pt",
+    "trainer_state.json",
+    "training_args.bin",
+    "scheduler.pt",
+    "rng_state.pth",
+    "scaler.pt",
+]
+MAXSIZE_MB = 50  # align with assignment note; warn if over this
 
 
 def bundle(homework_dir: str, utid: str):

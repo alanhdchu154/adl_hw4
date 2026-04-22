@@ -37,6 +37,8 @@ def visible_kart_detections(
         if int(class_id) != 1:
             continue
         tid = int(track_id)
+        if tid < 0 or tid >= len(karts):
+            continue
         w, h = x2 - x1, y2 - y1
         if w < min_side or h < min_side:
             continue
