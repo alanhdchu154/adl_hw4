@@ -13,6 +13,17 @@ from .data import VQADataset, benchmark
 
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
+
+def _cuda_training_speedups() -> None:
+    """Cheap throughput tweaks on NVIDIA GPUs (Colab-friendly)."""
+    if DEVICE != "cuda":
+        return
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    if hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision("high")
+
+
 processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
 
 
@@ -121,6 +132,7 @@ def train(
     num_workers: int = 4,
     max_steps: int | None = None,
     max_train_samples: int | None = None,
+    resume: bool = False,
 ):
     """
     Fine-tune a VLM model using LoRA.
@@ -139,7 +151,10 @@ def train(
         num_workers: DataLoader workers (use 0–4 on macOS if workers hang)
         max_steps: If set, overrides num_train_epochs (HF Trainer)
         max_train_samples: Cap dataset size for faster runs (None = all)
+        resume: If True, resume from the latest checkpoint under output_dir (Colab-friendly).
     """
+    _cuda_training_speedups()
+
     vlm = BaseVLM()
 
     # Create output directory
@@ -190,18 +205,28 @@ def train(
         per_device_train_batch_size=per_device_train_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=learning_rate,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.03,
+        max_grad_norm=1.0,
         bf16=True if DEVICE == "cuda" else False,
-        logging_steps=50,
+        logging_steps=100,
         save_strategy="steps",
         save_steps=500,
         save_total_limit=2,
         label_names=["labels"],
         dataloader_num_workers=num_workers,
         dataloader_persistent_workers=num_workers > 0,
+        dataloader_pin_memory=DEVICE == "cuda",
         remove_unused_columns=False,
     )
+    if DEVICE == "cuda":
+        train_kw["optim"] = "adamw_torch_fused"
+    if num_workers > 0:
+        train_kw["dataloader_prefetch_factor"] = 2
     if max_steps is not None:
-        train_kw["max_steps"] = int(max_steps)
+        ms = int(max_steps)
+        train_kw["max_steps"] = ms
+        train_kw["save_steps"] = max(10, min(500, max(ms // 3, 1)))
     training_args = TrainingArguments(**train_kw)
 
     # Initialize trainer
@@ -213,7 +238,10 @@ def train(
     )
 
     # Train the model
-    trainer.train()
+    if resume:
+        trainer.train(resume_from_checkpoint=True)
+    else:
+        trainer.train()
 
     # Save the model
     trainer.save_model(output_dir)

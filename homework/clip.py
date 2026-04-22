@@ -20,6 +20,15 @@ processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
+def _cuda_training_speedups() -> None:
+    if device != "cuda":
+        return
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    if hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision("high")
+
+
 def load(model_name: str = "clip_model"):
     from pathlib import Path
 
@@ -266,7 +275,10 @@ def train(
     num_workers: int = 4,
     max_steps: int | None = None,
     max_train_samples: int | None = None,
+    resume: bool = False,
 ):
+    _cuda_training_speedups()
+
     vlm = BaseVLM()
 
     output_dir = Path(__file__).parent / output_dir
@@ -314,18 +326,29 @@ def train(
         gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=True,
         learning_rate=learning_rate,
+        lr_scheduler_type="cosine",
+        warmup_ratio=0.03,
+        max_grad_norm=1.0,
         bf16=True if device == "cuda" else False,
         logging_steps=100,
         save_strategy="steps",
-        save_steps=1000,
+        save_steps=500,
         save_total_limit=2,
         label_names=["labels"],
         dataloader_num_workers=num_workers,
         dataloader_persistent_workers=num_workers > 0,
+        dataloader_pin_memory=device == "cuda",
         remove_unused_columns=False,
     )
+    if device == "cuda":
+        train_kw["optim"] = "adamw_torch_fused"
+    if num_workers > 0:
+        train_kw["dataloader_prefetch_factor"] = 2
     if max_steps is not None:
-        train_kw["max_steps"] = int(max_steps)
+        ms = int(max_steps)
+        train_kw["max_steps"] = ms
+        # HF only saves when global_step hits save_steps; save_steps > max_steps => no checkpoints.
+        train_kw["save_steps"] = max(10, min(500, max(ms // 3, 1)))
     training_args = TrainingArguments(**train_kw)
 
     trainer = Trainer(
@@ -336,7 +359,10 @@ def train(
         compute_loss_func=compute_clip_loss,
     )
 
-    trainer.train()
+    if resume:
+        trainer.train(resume_from_checkpoint=True)
+    else:
+        trainer.train()
 
     # save model
     trainer.save_model(output_dir)
