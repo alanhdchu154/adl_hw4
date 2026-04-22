@@ -7,6 +7,11 @@ from typing import Any
 DATA_DIR = Path(__file__).parent.parent / "data"
 
 
+def _as_data_dir(data_dir: Path | str | None) -> Path:
+    """CLI / Fire often passes str paths; datasets need pathlib for .glob()."""
+    return DATA_DIR if data_dir is None else Path(data_dir)
+
+
 class VQADataset:
     def __init__(self, split: str, data_dir: Path = None, max_samples: int = None):
         """
@@ -16,7 +21,7 @@ class VQADataset:
             split: Dataset split ('train', 'valid_grader', 'train_demo')
             data_dir: Directory containing the dataset (default: DATA_DIR)
         """
-        self.data_dir = data_dir or DATA_DIR
+        self.data_dir = _as_data_dir(data_dir)
 
         # Load all QA pairs for the split
         self.qa_pairs = []
@@ -61,7 +66,7 @@ class VQADataset:
 
 class CaptionDataset:
     def __init__(self, split: str, data_dir: Path = None, max_samples: int = None):
-        self.data_dir = data_dir or DATA_DIR
+        self.data_dir = _as_data_dir(data_dir)
 
         self.captions = []
 
@@ -91,7 +96,7 @@ class CaptionDataset:
 
 class MultiChoiceQADataset:
     def __init__(self, split: str, data_dir: Path = None, max_samples: int = None):
-        self.data_dir = data_dir or DATA_DIR
+        self.data_dir = _as_data_dir(data_dir)
 
         metafile = f"{self.data_dir}/{split}/all_mc_qas.json"
 
